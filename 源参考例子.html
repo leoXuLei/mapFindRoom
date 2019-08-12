@@ -1,0 +1,303 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <title>百度地图实现仿链家地图搜房功能</title>
+    <script type="text/javascript" src="https://api.map.baidu.com/api?v=2.0&ak=ez1LpvMNlQYeEkNvDwsReSHeGRhbGXhg"></script>
+    <script src="http://api.map.baidu.com/library/GeoUtils/1.2/src/GeoUtils.js"></script>
+    <script src="http://api.map.baidu.com/library/InfoBox/1.2/src/InfoBox_min.js"></script>
+
+
+    <style>
+        *{
+            padding: 0;
+            margin: 0;
+        }
+        body,div{
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+        /*隐藏地图控件*/
+        .anchorBL, .BMap_cpyCtrl {
+            display: none;
+        }
+        /*地图聚合样式*/
+        .bubble p {
+            text-align: center;
+            color: #fff;
+        }
+
+        .bubble .name {
+            margin-top: 25px;
+            font-size: 14px;
+        }
+        /*信息窗口样式*/
+        .infoArea{
+            font-size: 12px;
+            padding: 4px 0;
+            background-color: #fff;
+            border-radius: 2px;
+            box-shadow: 0 10px 8px 0 rgba(0,0,0,.1);
+        }
+        .infoArea p{
+            padding: 2px 10px;
+        }
+        .infoArea .name {
+            height: 20px;
+            line-height: 20px;
+            font-weight: 800;
+        }
+        .red{
+            color: red;
+        }
+        .infoBox .arrow {
+            position: absolute;
+            left: 10px;
+            bottom: -8px;
+            display: block;
+            border: 8px solid transparent;
+            border-left-color: red;
+            width: 0;
+            height: 0;
+            margin: 0 auto;
+            z-index: 1;
+        }
+        .infoBox .arrow .arrow-i {
+            display: none;
+            border: 6px solid transparent;
+            border-top-color: red;
+            width: 0;
+            height: 0;
+            position: absolute;
+            top: -7px;
+            left: -6px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="allMap"><!--地图--></div>
+    <script src="https://cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script>
+    <script>
+/*  实现地图搜房功能主要是几个步骤：
+    1、添加聚合点marker（利用接口返回数据用marker来显示相应的数量来模拟聚合效果）；
+    2、根据鼠标悬停事件来显示隐藏行政区划边界线（百度地图Polygon方法）；
+    3、点击marker或鼠标滚轮事件来扩大地图级别显示所有的点（addEventListener(event: String, handler: Function)）；
+    4、通过拖拽地图根据视野来加载对应的点，提高加载点位性能（百度地图GeoUtils）；
+    5、给具体的点位添加信息窗体事件。
+*/
+
+    window.map = initMap();//初始化地图对象
+    window.lastInfoBox = null; //定义最近打开的地图信息窗体
+    window.pointArray = [];//行政区划点位集合
+    window.labelData=[];//存数点位数据
+    addMarker();//添加聚合点
+
+    function initMap() {
+        var map = new BMap.Map("allMap", {enableMapClick: false, minZoom: 9, maxZoom: 18});
+        var point = new BMap.Point(113.658221, 34.780377);//郑州市中心点
+        map.centerAndZoom(point, 9);
+        map.enableScrollWheelZoom(true);
+         //监听地图级别缩放事件，当级别为9时默认加载集合点，扩大级别时显示详细点位数据
+        map.addEventListener("zoomend", function () {
+            var zoomLevel=map.getZoom(); //获取地图缩放级别
+            if(zoomLevel==9){
+                addMarker();
+            }else{
+                //当存储的数据有数时直接加载视野数据，否则请求接口数据
+                if(labelData.length>0){
+                    addViewLabel(labelData);
+                }else{
+                    getAllLabel();
+                }
+            }
+        });
+        return map;
+    }
+
+    //根据行政区划绘制聚合点位
+    function addMarker() {
+        map.clearOverlays();
+        //模拟数据
+        var clustereData=[
+            {"name":"郑州市","code":"410100000","longitude":"113.451854","latitude":"34.556306","count":"445"},
+            {"name":"开封市","code":"410200000","longitude":"114.356733","latitude":"34.506238","count":"377"},
+            {"name":"洛阳市","code":"410300000","longitude":"112.134468","latitude":"34.263041","count":"370"},
+            {"name":"平顶山市","code":"410400000","longitude":"112.892161","latitude":"33.773999","count":"300"},
+            {"name":"安阳市","code":"410500000","longitude":"114.098163","latitude":"36.106852","count":"290"},
+            {"name":"鹤壁市","code":"410600000","longitude":"114.208643","latitude":"35.653125","count":"245"},
+            {"name":"新乡市","code":"410700000","longitude":"113.933677","latitude":"35.31059","count":"236"},
+            {"name":"焦作市","code":"410800000","longitude":"113.050848","latitude":"35.124706","count":"210"},
+            {"name":"濮阳市","code":"410900000","longitude":"115.169299","latitude":"35.769421","count":"225"},
+            {"name":"许昌市","code":"411000000","longitude":"113.856834","latitude":"34.043383","count":"155"}
+        ];
+        //为了提高百度地图性能，本篇例子点位全用label来加载点位
+        $.each(clustereData,function (index,data) {
+            var point = new BMap.Point(data.longitude, data.latitude);
+            //自定义label样式
+            var tpl = '<div class="bubble bubble-1" data-longitude="' + data.longitude + '"' +
+                ' data-latitude="' + data.latitude + '" data-id="' + data.code + '">' +
+                '<p class="name" title="' + data.name + '">' + data.name + '</p>' +
+                '<p><span class="count">' + data.count + '</span>个楼盘</p>' +
+                '</div>';
+            var myLabel = new BMap.Label(tpl,
+                {
+                    position: point, //label 在此处添加点位位置信息
+                    offset: new BMap.Size(-46, -46)
+                });
+            myLabel.setStyle({
+                width: "92px",  //宽
+                height: "92px", //高度
+                border: "0",  //边
+                background: "rgba(84,144,244,.9)",    //背景颜色
+                borderRadius:"50%",
+                cursor: "pointer"
+            });
+            myLabel.setTitle(data.name);
+            map.addOverlay(myLabel);//添加点位
+            // 当鼠标悬停在label上时显示行政区划边界
+            myLabel.addEventListener("mouseover", function () {
+                myLabel.setStyle({background:"rgba(241,80,68,.9)"}); //修改覆盖物背景颜色
+                var regionName = myLabel.getTitle();
+                getBoundary(regionName);
+            });
+            // 当鼠标离开时在删除边界折线数据
+            myLabel.addEventListener("mouseout", function () {
+                myLabel.setStyle({background:"rgba(84,144,244,.9)"}); //修改覆盖物背景颜色
+                if (window.ply) {
+                    var polyPathArray = new Array();
+                    window.ply.setPath(polyPathArray);
+                    map.removeOverlay(ply);//清除折线数据
+                }
+            });
+
+            myLabel.addEventListener("click", function () {
+                map.zoomIn();
+                getAllLabel();//获取所有点位数据
+            });
+
+        })
+    }
+
+    //根据行政区划绘制边界（当鼠标悬停在label上时显示行政区划边界  执行本函数）
+    function getBoundary(regionName) {
+        var bdary = new BMap.Boundary();
+        bdary.get(regionName, function (rs) {
+            var count = rs.boundaries.length; //行政区域的点有多少个
+            console.log('rs.boundaries',rs.boundaries);
+            if (count === 0) {
+                alert('未能获取当前输入行政区域');
+                return;
+            }
+            for (var i = 0; i < count; i++) {
+                /* 循环是循环本区域regionName的点，绘制第一个边界图的的一个点时候进入if，建立全局多边形覆盖物ply，并添加到map，
+                                    之后再次进入都是进入else，给覆盖物ply更新数据（也就是全局多边形覆盖物更新）
+                */
+                if (!window.ply) {
+                    window.ply = new BMap.Polygon(rs.boundaries[i], {
+                        strokeWeight: 2,
+                        strokeColor: "rgb(66, 133, 244)",
+                        fillColor: "rgba(53, 126, 244,0.1)"
+                    }); //建立多边形覆盖物
+                    map.addOverlay(ply);  //添加覆盖物
+                } else {
+                    window.ply.setPath(rs.boundaries[i]);
+                    map.addOverlay(ply);  //添加覆盖物
+                }
+                ply.enableMassClear();
+                pointArray = pointArray.concat(ply.getPath());
+            }
+        });
+    }
+
+    //绘制详细楼盘点位信息
+    function getAllLabel() {
+        map.clearOverlays();
+        //模拟点位数据
+        var labelListData=[
+            {"name":"楼盘一","code":"01","longitude":"113.515919","latitude":"34.799769","num":"10000"},
+            {"name":"楼盘二","code":"02","longitude":"113.509444","latitude":"34.4475","num":"999"},
+            {"name":"楼盘三","code":"03","longitude":"113.68175","latitude":"34.737633","num":"888"},
+            {"name":"楼盘四","code":"04","longitude":"113.280769","latitude":"34.814961","num":"777"},
+            {"name":"楼盘五","code":"05","longitude":"113.611175","latitude":"34.784972","num":"666"},
+            {"name":"楼盘六","code":"06","longitude":"113.609436","latitude":"34.770558","num":"555"},
+            {"name":"楼盘七","code":"07","longitude":"113.687778","latitude":"34.861111","num":"444"},
+            {"name":"楼盘八","code":"08","longitude":"113.333333","latitude":"34.833333","num":"333"},
+            {"name":"楼盘九","code":"09","longitude":"114.0537","latitude":"34.7273","num":"222"},
+            {"name":"楼盘十","code":"10","longitude":"113.419642","latitude":"34.809192","num":"111"},
+            {"name":"楼盘十一","code":"11","longitude":"113.068653","latitude":"34.382344","num":"1111"},
+            {"name":"楼盘十二","code":"12","longitude":"113.1491","latitude":"34.389","num":"2222"}
+            ];
+        $.each(labelListData,function (index,data) {
+            var point = new BMap.Point(data.longitude, data.latitude);
+            var myLabel = new BMap.Label("",
+                {
+                    position: point, //label 在此处添加点位位置信息
+                    offset: new BMap.Size(-12, -15)
+                });
+            myLabel.setStyle({
+                width: "12px",  //宽
+                height: "12px", //高度
+                border: "0",  //边
+                backgroundColor: "rgb(66, 133, 244)",
+                borderRadius: "50%",
+                cursor: "pointer"
+            });
+            myLabel.setTitle(data.name);
+            labelData.push(myLabel);
+//            map.addOverlay(myLabel);
+            //信息窗口模板
+           var tpl="<div class='infoBox' data-longitude='"+data.longitude+"' data-latitude='"+data.latitude+"' data-id='"+data.code+"'>" +
+                "<div class='infoArea'><p class='name'>"+data.name+"</p><p class='num'>均价<span class='red'> "+data.num+" </span>万元/m3</p></div>" +
+               "<i class='arrow'><i class='arrow-i'></i></i></div>";
+            var infoBox = new BMapLib.InfoBox(map, tpl, {
+                boxStyle: {
+                    width: "160px",
+                    minHeight: "50px",
+                    marginBottom: "30px",
+                    backgroundColor: "white"
+                },
+                closeIconMargin: "15px 10px 4px 4px",
+                closeIconUrl: "img/icon-close.png",
+                enableAutoPan: false,
+                align: INFOBOX_AT_TOP
+            });
+            //鼠标点击时打开新标签并关闭上一个标签内容
+            myLabel.addEventListener("mouseover", function () {
+                if (window.lastInfoBox) {
+                    //判断上一个窗体是否存在，若存在则执行close
+                    window.lastInfoBox.close();
+                }
+                window.lastInfoBox = infoBox;
+                infoBox.open(point);
+            });
+           //鼠标点击时标签一直存在
+            myLabel.addEventListener("click", function () {
+                window.lastInfoBox=null;
+                infoBox.open(point);
+            });
+        });
+        addViewLabel(labelData);//加载可视范围点
+    }
+
+    //根据地图视野动态加载数据，当数据多时此方法用来提高地图加载性能
+    //由于此篇模拟点位数据较少，视野加载不明显，当数据多时可直观感觉
+    function addViewLabel(labels) {
+        map.clearOverlays();
+        for(var i = 0; i < labels.length; i ++){
+            var result = BMapLib.GeoUtils.isPointInRect(labels[i].point, map.getBounds());
+            if(result == true) {
+                map.addOverlay(labels[i])
+            } else{
+                map.removeOverlay(labels[i]);
+            }
+        }
+    }
+    </script>
+</body>
+
+</html>
