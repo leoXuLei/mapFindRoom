@@ -17,7 +17,6 @@ const Utils = {
 
 
 
-window.map = initMap() // 初始化地图
 
 window.lastMyLabel = null // 上次点击的三级楼盘label
 window.lastInfoBox = null // 上次打开的三级楼盘信息窗体
@@ -204,13 +203,50 @@ window.eventFlag = true // eventFlag用于解决：画完圈后，点击三级�
 window.onlyOnceFlag = true // onlyOnceFlag用来解决：第一次进商圈就画圈时为了保证三级楼盘此时有数据，在点击画圈之后去请求数据，后续再点进商圈再掉就没必要了，所以加个flag控制一下
 
 
-window.map = MapEvent.initMap() // 初始化地图，绑定地图放缩、拖拽事件，绑定画圈相关事件
+window.map = initMap() // 初始化地图，绑定地图放缩、拖拽事件，绑定画圈相关事件
 initfirstLevelArea() // 初始化一级假数据
 
 
 
+
+// 初始化地图
+function initMap() {
+  var map = new BMap.Map('allMap', {
+    enableMapClick: false,
+    minZoom: 11,
+    maxZoom: 19
+  })
+  var point = new BMap.Point(121.48169, 31.235682) // 上海市中心点
+  map.centerAndZoom(point, 12) // 地图中心点和初始化放缩层级
+  map.enableScrollWheelZoom(true) // 开启鼠标滚轮缩放功能。仅对PC上有效
+  map.addControl(
+    new BMap.ScaleControl({
+      anchor: BMAP_ANCHOR_TOP_LEFT
+    })
+  ) // 左上角，添加比例尺;
+  map.addControl(
+    new BMap.NavigationControl({
+      type: BMAP_NAVIGATION_CONTROL_ZOOM,
+      anchor: BMAP_ANCHOR_BOTTOM_RIGHT,
+      offset: new BMap.Size(20, 20)
+    })
+  ) // 右下角，添加放大缩小控件
+
+  // 监听地图级别缩放事件
+  map.addEventListener('zoomend', function () {
+    showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
+  })
+  // 停止拖拽地图时触发事件
+  map.addEventListener('dragend', function () {
+    showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
+  })
+
+  bindDrawEvents(map) // 绑定画圈找房相关事件
+  return map
+}
+
 // 初始化一级假数据
-function initFakeData() {
+function initfirstLevelArea() {
   var myGeo = new BMap.Geocoder()
   var countAsync = 0 // 用于判断获取一级城区数据异步任务是否都完成的计数
   $.each(cityAreas, function (index, item) {
@@ -255,8 +291,8 @@ function initFakeData() {
             ++countAsync
             // 一级城区解析完毕后添加聚合点
             if (countAsync === cityAreas.length) {
-              showLabels(areaFakeData, 'first') // 展示一级城区
-              console.log('一级城区假数据areaFakeData', areaFakeData)
+              showLabels(firstLevelArea, 'first') // 展示一级城区
+              console.log('一级城区假数据firstLevelArea', firstLevelArea)
             }
           })
 
@@ -269,18 +305,6 @@ function initFakeData() {
 }
 
 
-// 监听地图级别缩放事件
-map.addEventListener('zoomend', function () {
-  showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
-})
-// 停止拖拽地图时触发事件
-map.addEventListener('dragend', function () {
-  showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
-})
-
-
-
-
 // 根据地图当前zoom展示不同层级区域
 function showThreeLevelsByZoom() {
   var zoomLevel = map.getZoom() // 获取地图缩放级别
@@ -289,13 +313,13 @@ function showThreeLevelsByZoom() {
     return
   }
   if (zoomLevel == 11 || zoomLevel == 12 || zoomLevel == 13) {
-    showLabels(areaFakeData, 'first') // 绘制一级城区聚合点
+    showLabels(firstLevelArea, 'first') // 绘制一级城区聚合点
   } else if (zoomLevel == 14 || zoomLevel == 15) {
     // 展示二级商圈（第一次直接绘制聚合点，之后使用上次存过的聚合点）
     if (window.circleLabelList.length > 0) {
       addViewLabel(window.circleLabelList)
     } else {
-      showLabels(circleFakeData, 'second') // 绘制二级商圈聚合点
+      showLabels(secondLevelCircle, 'second') // 绘制二级商圈聚合点
     }
   } else {
     // 展示三级楼盘（第一次直接绘制聚合点，之后使用上次存过的聚合点）
@@ -393,7 +417,7 @@ function getBoundary(border = '') {
 function showMapBuildings() {
   map.clearOverlays()
   window.buildingLabelList = []
-  $.each(buildingFakeData, function (index, data) {
+  $.each(thirdLevelBuilding, function (index, data) {
     var point = new BMap.Point(data.longitude, data.latitude)
     //  自定义label样式(默认三角)
     var tplLabelStyle = `<p class="bubble-3 bubble" data-longitude="${data.longitude}" data-latitude="${data.latitude}" data-id="${data.id}">
@@ -439,12 +463,19 @@ function showMapBuildings() {
         minHeight: '50px',
         marginBottom: '40px',
         backgroundColor: 'white'
-      },
-      /* closeIconMargin: "15px 10px 4px 4px",
-      closeIconUrl: "img/1.png",
-      enableAutoPan: false,
-      align: INFOBOX_AT_TOP */
+      }
     })
+    /* 
+    boxStyle: {
+      width: '160px',
+      minHeight: '50px',
+      marginBottom: '40px',
+      backgroundColor: 'white'
+    },
+    closeIconMargin: "15px 10px 4px 4px",
+    closeIconUrl: "img/1.png",
+    enableAutoPan: false,
+    align: INFOBOX_AT_TOP */
 
     //鼠标悬停在本label上时
     myLabel.addEventListener('mouseover', function () {
@@ -542,12 +573,12 @@ function clearAllPolygon() {
 // 绑定画圈找房相关事件
 function bindDrawEvents(map) {
   //点击画圈找房按钮
-  drawBtn.addEventListener('click', function (e) {
+  UI.drawBtn.addEventListener('click', function (e) {
     let zoom = map.getZoom()
     if (zoom < 14) {
-      ul.innerHTML = '请放大地图后使用画圈找房'
+      UI.ul.innerHTML = '请放大地图后使用画圈找房'
       setTimeout(function () {
-        ul.innerHTML = ''
+        UI.ul.innerHTML = ''
       }, 500)
       return
     }
@@ -567,7 +598,7 @@ function bindDrawEvents(map) {
     }
   })
   // 点击重画按钮
-  drawAgain.addEventListener('click', function (e) {
+  UI.drawAgain.addEventListener('click', function (e) {
     if (isInDrawing) {
       //清空地图上画的折线和圈
       map.removeOverlay(polygonAfterDraw)
@@ -588,7 +619,7 @@ function bindDrawEvents(map) {
     }
   })
   //点击退出画圈按钮
-  exitBtn.addEventListener('click', function (e) {
+  UI.exitBtn.addEventListener('click', function (e) {
     //恢复地图移动点击等操作
     map.enableDragging()
     map.enableScrollWheelZoom()
