@@ -1,29 +1,19 @@
 /*  实现地图搜房功能主要是几个步骤：
-    1、添加聚合点marker（利用接口返回数据用marker来显示相应的数量来模拟聚合效果）；
+    1、添加标注聚合点marker（利用接口返回数据用marker来显示相应的数量来模拟聚合效果）；
     2、根据鼠标悬停事件来显示隐藏行政城区边界线（百度地图Polygon方法）；
     3、点击marker或鼠标滚轮事件来扩大地图级别显示所有的点（addEventListener(event: String, handler: Function)）；
     4、通过拖拽地图根据视野来加载对应的点，提高加载点位性能（百度地图GeoUtils）；
     5、给具体的点位添加信息窗体事件。
 */
-var Utils = {
+
+
+// 工具函数
+const Utils = {
+  // 生成随机数
   random: function (n, m) {
-    var random = Math.floor(Math.random() * (m - n + 1) + n)
-    return random
+    return Math.floor(Math.random() * (m - n + 1) + n)
   }
 }
-/*** 界面元素 ***/
-var drawBtn = document.getElementById('draw') // 画圈按钮
-var drawAgain = document.getElementById('drawAgain') // 重画按钮
-var exitBtn = document.getElementById('exit') // 退出画圈按钮
-var ul = document.getElementById('data') // 画圈找房完成后的数据展示列表
-
-/*** 画圈有关的数据结构 ***/
-var isInDrawing = false // 是否处于画圈状态下
-var isMouseDown = false // 是否处于鼠标左键按下状态下
-var polyPointArray = [] // 存储画出折线点的数组
-var lastPolyLine = null // 上次操作画出的折线
-var polygonAfterDraw = null // 画圈完成后生成的多边形
-var markerList = [] // 存储地图上marker的数组
 
 
 
@@ -57,10 +47,10 @@ var cityAreas = [
   '嘉定区',
   '宝山'
 ]
-// 一级城区假数据
-var areaFakeData = []
-// 二级商圈假数据
-var circleFakeData = [{
+// 一级城区假数据: 根据一级城区名称数组调百度API得到
+const firstLevelArea = []
+// 二级商圈假数据：张江、唐镇、陆家嘴
+const secondLevelCircle = [{
     id: 'sq001',
     name: '张江',
     longitude: 121.608536,
@@ -85,8 +75,8 @@ var circleFakeData = [{
     count: 4
   }
 ]
-// 三级楼盘假数据
-var buildingFakeData = [{
+// 三级楼盘假数据: 楼盘一----楼盘十二
+const thirdLevelBuilding = [{
     name: '楼盘一',
     code: '01',
     longitude: '121.522006',
@@ -184,7 +174,40 @@ var buildingFakeData = [{
   }
 ]
 
-initFakeData() // 初始化一级假数据
+
+
+/*** 界面元素 ***/
+const UI = {
+  drawBtn: document.getElementById('draw'), // 画圈按钮
+  drawAgain: document.getElementById('drawAgain'), // 重画按钮
+  exitBtn: document.getElementById('exit'), // 退出画圈按钮
+  ul: document.getElementById('data') // 画圈完成后的数据展示列表
+}
+
+
+
+/*** 交互逻辑涉及的数据 ***/
+var isInDrawing = false; // 是否处于画圈状态下
+var isMouseDown = false; // 是否处于鼠标左键按下状态下
+var polyPointArray = [] // 存储画出折线点的数组
+var lastPolyLine = null // 上次操作画出的折线
+var polygonAfterDraw = null // 画圈完成后生成的多边形
+
+
+window.lastMyLabel = null // 上次点击的三级楼盘label
+window.lastInfoBox = null // 上次打开的三级楼盘信息窗体
+window.secondCircleLabelList = [] // 存数二级标注聚合点数据  （用于根据地图视野动态加载数据）
+window.thirdBuildingLabelList = [] // 存数三级标注聚合点数据 （用于根据地图视野动态加载数据）
+window.polygonArr = [] // 存当前显示一级城区的点（例如浦东新区由三块分离的小城区组成）
+
+window.eventFlag = true // eventFlag用于解决：画完圈后，点击三级楼盘label希望移到地图中心 却 触发 mouseDown和mouseUp事件（默认为ture,mouseUp后置为false，点击重画后置为true）
+window.onlyOnceFlag = true // onlyOnceFlag用来解决：第一次进商圈就画圈时为了保证三级楼盘此时有数据，在点击画圈之后去请求数据，后续再点进商圈再掉就没必要了，所以加个flag控制一下
+
+
+window.map = MapEvent.initMap() // 初始化地图，绑定地图放缩、拖拽事件，绑定画圈相关事件
+initfirstLevelArea() // 初始化一级假数据
+
+
 
 // 初始化一级假数据
 function initFakeData() {
@@ -240,52 +263,29 @@ function initFakeData() {
         },
         '上海市'
       )
-      areaFakeData.push(a)
+      firstLevelArea.push(a)
     })(item)
   })
 }
 
-// 初始化地图
-function initMap() {
-  var map = new BMap.Map('allMap', {
-    enableMapClick: false,
-    minZoom: 11,
-    maxZoom: 19
-  })
-  var point = new BMap.Point(121.48169, 31.235682) // 上海市中心点
-  map.centerAndZoom(point, 12) // 地图中心点和初始化放缩层级
-  map.enableScrollWheelZoom(true) // 开启鼠标滚轮缩放功能。仅对PC上有效
-  map.addControl(
-    new BMap.ScaleControl({
-      anchor: BMAP_ANCHOR_TOP_LEFT
-    })
-  ) // 左上角，添加比例尺;
-  map.addControl(
-    new BMap.NavigationControl({
-      type: BMAP_NAVIGATION_CONTROL_ZOOM,
-      anchor: BMAP_ANCHOR_BOTTOM_RIGHT,
-      offset: new BMap.Size(20, 20)
-    })
-  ) // 右下角，添加放大缩小控件
 
-  // 监听地图级别缩放事件
-  map.addEventListener('zoomend', function () {
-    showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
-  })
-  // 停止拖拽地图时触发事件
-  map.addEventListener('dragend', function () {
-    showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
-  })
+// 监听地图级别缩放事件
+map.addEventListener('zoomend', function () {
+  showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
+})
+// 停止拖拽地图时触发事件
+map.addEventListener('dragend', function () {
+  showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
+})
 
-  bindEvents(map) // 绑定画圈找房相关事件
-  return map
-}
+
+
 
 // 根据地图当前zoom展示不同层级区域
 function showThreeLevelsByZoom() {
   var zoomLevel = map.getZoom() // 获取地图缩放级别
   if (isInDrawing) {
-    // 画圈过程完成后会setViewport调整视野中心，这种情况zoom级别改变和放缩会触发本函数，不执行后续操作
+    // 画圈过程完成后会setViewport调整视野中心，这种情况zoom级别改变和放缩会触发本函数，直接return，不执行后续操作
     return
   }
   if (zoomLevel == 11 || zoomLevel == 12 || zoomLevel == 13) {
@@ -335,7 +335,8 @@ function showLabels(fakeData, type) {
       border: '0', // 边
       background: '#457cf4', // 背景颜色
       borderRadius: '50%',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      zIndex: 2
     })
     myLabel.setTitle(data.name) // 悬浮提示文字
     if (type === 'second') {
@@ -354,8 +355,9 @@ function showLabels(fakeData, type) {
     // 当鼠标离开本label时删除多边形边界
     myLabel.addEventListener('mouseout', function (event) {
       myLabel.setStyle({
-        background: '#457cf4'
-      }) //修改覆盖物背景颜色
+        background: '#457cf4',
+        zIndex: 4
+      })
       clearAllPolygon() // 清楚地图上的所有多边形边界
     })
 
@@ -537,8 +539,8 @@ function clearAllPolygon() {
   }
 }
 
-//绑定按钮事件
-function bindEvents(map) {
+// 绑定画圈找房相关事件
+function bindDrawEvents(map) {
   //点击画圈找房按钮
   drawBtn.addEventListener('click', function (e) {
     let zoom = map.getZoom()
@@ -549,13 +551,12 @@ function bindEvents(map) {
       }, 500)
       return
     }
-    map.clearOverlays() // 点击画圈后清除地图上的覆盖物
-    //禁止地图移动点击等操作
-    map.disableDragging()
-    map.disableScrollWheelZoom()
-    map.disableDoubleClickZoom()
-    map.disableKeyboard()
-    map.setDefaultCursor('crosshair')
+    map.clearOverlays() //  点击画圈后清除地图上的覆盖物
+    map.disableDragging() // 	禁用地图拖拽
+    map.disableScrollWheelZoom() //  禁用滚轮放大缩小
+    map.disableDoubleClickZoom() //  禁用双击放大
+    map.disableKeyboard() //  禁用键盘操作
+    map.setDefaultCursor('crosshair') //  设置地图默认的鼠标指针样式。参数cursor应符合CSS的cursor属性规范
     //设置标志位进入画圈状态
     isInDrawing = true
     window.eventFlag = true
@@ -583,7 +584,7 @@ function bindEvents(map) {
       map.disableKeyboard()
       map.setDefaultCursor('crosshair')
       //更新dom结构
-      ul.innerHTML = ''
+      UI.ul.innerHTML = ''
     }
   })
   //点击退出画圈按钮
@@ -598,7 +599,7 @@ function bindEvents(map) {
     isInDrawing = false
     showThreeLevelsByZoom() // 根据地图当前zoom展示不同层级区域
     //更新dom结构
-    ul.innerHTML = ''
+    UI.ul.innerHTML = ''
   })
   //为地图绑定鼠标按下事件(开始画圈)
   map.addEventListener('mousedown', function (e) {
@@ -664,7 +665,7 @@ function bindEvents(map) {
       //计算房屋对于多边形的包含情况
       var ret = caculateEstateContainedInPolygon(polygonAfterDraw)
       //更新dom结构
-      ul.innerHTML = ''
+      UI.ul.innerHTML = ''
       var fragment = document.createDocumentFragment()
       for (var i = 0; i < ret.length; i++) {
         var li = document.createElement('li')
@@ -673,7 +674,7 @@ function bindEvents(map) {
           (li.textContent = ret[i].getTitle())
         fragment.appendChild(li)
       }
-      ul.appendChild(fragment)
+      UI.ul.appendChild(fragment)
 
       //恢复地图移动点击等操作
       map.enableDragging()
@@ -694,12 +695,12 @@ function caculateEstateContainedInPolygon(polygon) {
   // 在多边形内的label数组
   var labelInPolygonArray = []
   //计算每个点是否包含在该多边形内
-  for (var i = 0; i < window.buildingLabelList.length; i++) {
+  for (var i = 0; i < window.thirdBuildingLabelList.length; i++) {
     //该marker的坐标点
-    var labelPoint = window.buildingLabelList[i].getPosition()
+    var labelPoint = window.thirdBuildingLabelList[i].getPosition()
 
     if (isPointInPolygon(labelPoint, bound, pointArray)) {
-      labelInPolygonArray.push(window.buildingLabelList[i])
+      labelInPolygonArray.push(window.thirdBuildingLabelList[i])
     }
   }
 
